@@ -41,6 +41,25 @@ def style_window(hwnd):
             u.SendMessageW(hwnd, 0x80, which, h)                          # WM_SETICON
 
 
+def fit_to_screen(hwnd):
+    """屏幕放不下默认尺寸（比如 1080p 再开 200% 缩放）时，缩小并居中，别让窗口底部钻到任务栏下面。"""
+    from ctypes import wintypes as wt
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [('cbSize', wt.DWORD), ('rcMonitor', wt.RECT), ('rcWork', wt.RECT), ('dwFlags', wt.DWORD)]
+    u = ctypes.windll.user32
+    r = wt.RECT()
+    u.GetWindowRect(hwnd, ctypes.byref(r))
+    mi = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+    u.GetMonitorInfoW(u.MonitorFromWindow(hwnd, 2), ctypes.byref(mi))   # MONITOR_DEFAULTTONEAREST
+    wa = mi.rcWork
+    if r.left >= wa.left and r.top >= wa.top and r.right <= wa.right and r.bottom <= wa.bottom:
+        return
+    ww, wh = wa.right - wa.left, wa.bottom - wa.top
+    w, h = min(r.right - r.left, int(ww * 0.94)), min(r.bottom - r.top, int(wh * 0.94))
+    u.SetWindowPos(hwnd, 0, wa.left + (ww - w) // 2, wa.top + (wh - h) // 2, w, h, 0x0014)  # SWP_NOZORDER | SWP_NOACTIVATE
+
+
 def on_shown(win):
     hwnd = 0
     try:
@@ -48,10 +67,11 @@ def on_shown(win):
     except Exception:
         hwnd = ctypes.windll.user32.FindWindowW(None, TITLE)
     if hwnd:
-        try:
-            style_window(hwnd)
-        except Exception:
-            pass
+        for f in (style_window, fit_to_screen):
+            try:
+                f(hwnd)
+            except Exception:
+                pass
 
 
 if __name__ == '__main__':

@@ -1,27 +1,30 @@
-"""漫画书架：本地 Kindle 风格漫画阅读器的后端。
-- 读取 config.json 里 library 目录下的 .cbz / .zip
-- 以 Edge 应用模式（无地址栏）打开前端；窗口关掉约 2 分钟后自动退出
-用法: pythonw server.py
+"""漫画书架的本地后端（由 app.py 在随机端口启动，前端是 index.html）。
+- 漫画库默认是程序旁边的 library 文件夹，可用 config.json 的 "library" 覆盖
+- 可从 Kindle 电脑版导入没有 DRM 的个人文档（见 kindle.py）
+- 支持手动旋转单页（存在 rotations.json）
+调试用: python server.py [端口]   然后用浏览器打开 http://127.0.0.1:端口/
 """
-import http.server, io, json, os, re, socketserver, subprocess, sys, threading, time, urllib.parse, urllib.request, webbrowser, zipfile
+import http.server, io, json, os, re, socketserver, sys, threading, time, urllib.parse, zipfile
+
+import kindle
 
 FROZEN = getattr(sys, 'frozen', False)
-# RES：程序自带的文件（index.html）；DATA：可写的数据（进度、缓存、配置），打包后放在 exe 旁边
+# RES：程序自带的文件（index.html、icon.ico）；DATA：可写的数据（进度、缓存、配置），打包后放在 exe 旁边
 RES = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.dirname(sys.executable) if FROZEN else os.path.dirname(os.path.abspath(__file__))
-HERE = RES
-CONF = {'library': r'E:\KindleKCC\cbz', 'port': 47615}
+CONF = {'library': os.path.join(DATA, 'library'), 'kindle_dir': None}
 try:
     CONF.update(json.load(open(os.path.join(DATA, 'config.json'), encoding='utf-8')))
 except Exception:
     pass
-LIB, PORT = CONF['library'], int(CONF['port'])
+LIB = os.path.abspath(os.path.expandvars(os.path.expanduser(CONF['library'])))
 META = os.path.join(DATA, '.cache')
 PROG = os.path.join(DATA, 'progress.json')
+ROTS = os.path.join(DATA, 'rotations.json')
 LOG = os.path.join(DATA, 'server.log')
 os.makedirs(META, exist_ok=True)
+os.makedirs(LIB, exist_ok=True)
 IMG = re.compile(r'\.(jpe?g|png|webp|gif|bmp)$', re.I)
-last_ping = START = time.time()
 lock = threading.Lock()
 zips = {}
 
@@ -31,11 +34,11 @@ def natural(s):
 
 
 def books():
-    out = []
-    for f in sorted(os.listdir(LIB), key=natural):
-        if f.lower().endswith(('.cbz', '.zip')):
-            out.append(f)
-    return out
+    try:
+        names = os.listdir(LIB)
+    except OSError:
+        return []
+    return sorted((f for f in names if f.lower().endswith(('.cbz', '.zip'))), key=natural)
 
 
 def safe_path(bid):
@@ -50,6 +53,8 @@ def open_zip(bid):
     with lock:
         z = zips.get(bid)
         if not z or z[1] != m:
+            if z:
+                z[0].close()
             zips[bid] = (zipfile.ZipFile(p), m, threading.Lock())
         return zips[bid]
 
@@ -65,26 +70,38 @@ def read_entry(bid, name):
         return z.read(name)
 
 
-def load_progress():
+def load_json(path):
     try:
-        return json.load(open(PROG, encoding='utf-8'))
+        return json.load(open(path, encoding='utf-8'))
     except Exception:
         return {}
 
 
+def save_json(path, obj):
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def cache_key(bid):
+    return re.sub(r'[^\w.-]', '_', bid)
+
+
+def rotations(bid):
+    """{页码: 角度}，角度为顺时针 90/180/270。"""
+    return {int(k): v for k, v in load_json(ROTS).get(bid, {}).items() if v % 360}
+
+
 def book_meta(bid):
-    """每页宽高（跨页判断要用），按文件修改时间缓存。"""
+    """每页宽高（跨页判断要用），按文件修改时间缓存。这里是原图尺寸，不含手动旋转。"""
     from PIL import Image
     p = safe_path(bid)
-    key = re.sub(r'[^\w.-]', '_', bid) + '.json'
-    cache = os.path.join(META, key)
+    cache = os.path.join(META, cache_key(bid) + '.json')
     m = os.path.getmtime(p)
-    try:
-        c = json.load(open(cache, encoding='utf-8'))
-        if c.get('mtime') == m:
-            return c
-    except Exception:
-        pass
+    c = load_json(cache)
+    if c.get('mtime') == m:
+        return c
     names = pages(bid)
     dims = []
     for n in names:
@@ -93,20 +110,110 @@ def book_meta(bid):
         except Exception:
             dims.append([1, 1])
     c = {'mtime': m, 'names': names, 'dims': dims}
-    json.dump(c, open(cache, 'w', encoding='utf-8'))
+    save_json(cache, c)
     return c
 
 
 def cover(bid):
     from PIL import Image
-    key = re.sub(r'[^\w.-]', '_', bid)
-    p = os.path.join(META, key + f'.{int(os.path.getmtime(safe_path(bid)))}.cover.jpg')
+    p = os.path.join(META, cache_key(bid) + f'.{int(os.path.getmtime(safe_path(bid)))}.cover.jpg')
     if not os.path.exists(p):
         names = pages(bid)
         im = Image.open(io.BytesIO(read_entry(bid, names[0]))).convert('RGB')
         im.thumbnail((360, 540), Image.LANCZOS)
         im.save(p, quality=86)
     return open(p, 'rb').read()
+
+
+def page_image(bid, n):
+    """返回 (图片字节, Content-Type)。手动旋转过的页转好后缓存到 .cache。"""
+    names = book_meta(bid)['names']
+    name = names[n]
+    deg = rotations(bid).get(n, 0)
+    if not deg:
+        low = name.lower()
+        ct = 'image/png' if low.endswith('.png') else 'image/webp' if low.endswith('.webp') else 'image/jpeg'
+        return read_entry(bid, name), ct
+    p = os.path.join(META, f'{cache_key(bid)}.{int(os.path.getmtime(safe_path(bid)))}.p{n}.r{deg}.jpg')
+    if not os.path.exists(p):
+        from PIL import Image
+        im = Image.open(io.BytesIO(read_entry(bid, name)))
+        im = im.rotate(-deg, expand=True)          # PIL 是逆时针，这里存的是顺时针角度
+        if im.mode not in ('L', 'RGB'):
+            im = im.convert('RGB')
+        im.save(p + '.tmp', 'JPEG', quality=95)
+        os.replace(p + '.tmp', p)
+    return open(p, 'rb').read(), 'image/jpeg'
+
+
+# ---------------- Kindle 导入 ----------------
+job = {'running': False, 'items': [], 'index': -1, 'page': 0, 'pages': 0, 'finished': 0}
+job_lock = threading.Lock()
+
+
+def kindle_dst(title):
+    return kindle.safe_name(title) + '.cbz'
+
+
+def kindle_list():
+    have = {f.lower() for f in books()}
+    out, dirs = [], []
+    for b in kindle.list_books(CONF.get('kindle_dir')):
+        f = kindle_dst(b['title'])
+        out.append({'asin': b['asin'], 'title': b['title'], 'size': b['size'], 'mtime': b['mtime'],
+                    'file': f, 'imported': f.lower() in have})
+        d = os.path.realpath(os.path.dirname(os.path.dirname(b['path'])))   # 日志里常是 8.3 短路径，显示时换成长路径
+        if d not in dirs:
+            dirs.append(d)
+    out.sort(key=lambda x: natural(x['title']))
+    return out, dirs
+
+
+def import_worker(items):
+    for i, it in enumerate(items):
+        with job_lock:
+            job.update(index=i, page=0, pages=0)
+            it['state'] = 'doing'
+
+        def prog(n, total):
+            job['page'], job['pages'] = n, total
+        dst = os.path.join(LIB, kindle_dst(it['title']))
+        try:
+            if os.path.exists(dst):
+                it.update(state='skip', msg='已存在')
+            else:
+                n, rot = kindle.extract(it['path'], dst, prog)
+                it.update(state='done', msg=f'{n} 页' + (f'，转正 {rot} 张跨页' if rot else ''))
+        except ValueError as e:
+            it.update(state='skip', msg=str(e))
+        except Exception as e:
+            it.update(state='error', msg=f'{type(e).__name__}: {e}')
+            try:
+                os.remove(dst + '.part')
+            except OSError:
+                pass
+    with job_lock:
+        job.update(running=False, index=-1, finished=time.time())
+
+
+def start_import(asins):
+    with job_lock:
+        if job['running']:
+            raise RuntimeError('已有导入任务在进行')
+        found = {b['asin']: b for b in kindle.list_books(CONF.get('kindle_dir'))}
+        items = [{'asin': a, 'title': found[a]['title'], 'path': found[a]['path'], 'state': 'wait', 'msg': ''}
+                 for a in asins if a in found]
+        if not items:
+            raise ValueError('没有选中可导入的书')
+        job.update(running=True, items=items, index=0, page=0, pages=0, finished=0)
+    threading.Thread(target=import_worker, args=(items,), daemon=True).start()
+
+
+def job_status():
+    with job_lock:
+        return {'running': job['running'], 'index': job['index'], 'page': job['page'], 'pages': job['pages'],
+                'finished': job['finished'],
+                'items': [{k: it[k] for k in ('asin', 'title', 'state', 'msg')} for it in job['items']]}
 
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -129,21 +236,20 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
+    def body(self):
+        return json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
+
     def do_GET(self):
-        global last_ping
         u = urllib.parse.urlparse(self.path)
         q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
         try:
             if u.path in ('/', '/index.html'):
-                return self.send(200, open(os.path.join(HERE, 'index.html'), 'rb').read(), 'text/html; charset=utf-8')
-            if u.path == '/api/ping':
-                last_ping = time.time()
-                return self.send(200, {'ok': True, 'app': 'manga-shelf'})
+                return self.send(200, open(os.path.join(RES, 'index.html'), 'rb').read(), 'text/html; charset=utf-8')
             if u.path == '/api/books':
-                prog = load_progress()
+                prog = load_json(PROG)
                 out = []
                 for b in books():
                     try:
@@ -155,36 +261,68 @@ class H(http.server.BaseHTTPRequestHandler):
                 return self.send(200, out)
             if u.path == '/api/book':
                 c = book_meta(q['id'])
-                return self.send(200, {'id': q['id'], 'dims': c['dims'], 'progress': load_progress().get(q['id'])})
+                rot = rotations(q['id'])
+                dims = [d[::-1] if rot.get(i, 0) % 180 else d for i, d in enumerate(c['dims'])]
+                return self.send(200, {'id': q['id'], 'dims': dims, 'rot': [rot.get(i, 0) for i in range(len(dims))],
+                                       'progress': load_json(PROG).get(q['id'])})
             if u.path == '/cover':
                 return self.send(200, cover(q['id']), 'image/jpeg', cache=True)
             if u.path == '/page':
-                names = book_meta(q['id'])['names']
-                n = names[int(q['n'])]
-                ct = 'image/png' if n.lower().endswith('.png') else 'image/webp' if n.lower().endswith('.webp') else 'image/jpeg'
-                return self.send(200, read_entry(q['id'], n), ct, cache=True)
+                data, ct = page_image(q['id'], int(q['n']))
+                return self.send(200, data, ct, cache=True)   # 前端 URL 里带了角度，旋转后不会命中旧缓存
+            if u.path == '/api/kindle':
+                bs, dirs = kindle_list()
+                return self.send(200, {'library': LIB, 'dirs': dirs, 'books': bs, 'job': job_status()})
+            if u.path == '/api/kindle/status':
+                return self.send(200, job_status())
             self.send(404, {'error': 'not found'})
         except (FileNotFoundError, KeyError, IndexError, ValueError) as e:
             self.send(404, {'error': str(e)})
+        except Exception as e:
+            self.log_message('ERROR %s %r', self.path, e)
+            self.send(500, {'error': str(e)})
 
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
-        if u.path == '/api/log':
-            msg = self.rfile.read(int(self.headers.get('Content-Length', 0))).decode('utf-8', 'replace')
-            self.log_message('CLIENT %s', msg[:2000])
-            return self.send(200, {'ok': True})
-        if u.path != '/api/progress':
-            return self.send(404, {'error': 'not found'})
         try:
-            d = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
-            safe_path(d['id'])
-            with lock:
-                prog = load_progress()
-                prog[d['id']] = {'page': int(d['page']), 'total': int(d['total']), 'ts': time.time()}
-                tmp = PROG + '.tmp'
-                json.dump(prog, open(tmp, 'w', encoding='utf-8'), ensure_ascii=False)
-                os.replace(tmp, PROG)
-            self.send(200, {'ok': True})
+            if u.path == '/api/log':
+                msg = self.rfile.read(int(self.headers.get('Content-Length', 0))).decode('utf-8', 'replace')
+                self.log_message('CLIENT %s', msg[:2000])
+                return self.send(200, {'ok': True})
+            if u.path == '/api/progress':
+                d = self.body()
+                safe_path(d['id'])
+                with lock:
+                    prog = load_json(PROG)
+                    prog[d['id']] = {'page': int(d['page']), 'total': int(d['total']), 'ts': time.time()}
+                    save_json(PROG, prog)
+                return self.send(200, {'ok': True})
+            if u.path == '/api/rotate':
+                # {"id": 书, "n": 页码, "by": 90 / -90}  或  {"id", "n", "deg": 0} 直接设定（0 = 还原）
+                d = self.body()
+                bid, n = d['id'], int(d['n'])
+                if not 0 <= n < len(book_meta(bid)['names']):
+                    raise IndexError(n)
+                with lock:
+                    allr = load_json(ROTS)
+                    cur = allr.get(bid, {})
+                    deg = (int(d['deg']) if 'deg' in d else int(cur.get(str(n), 0)) + int(d.get('by', 90))) % 360
+                    if deg % 90:
+                        raise ValueError('角度必须是 90 的倍数')
+                    if deg:
+                        cur[str(n)] = deg
+                    else:
+                        cur.pop(str(n), None)
+                    if cur:
+                        allr[bid] = cur
+                    else:
+                        allr.pop(bid, None)
+                    save_json(ROTS, allr)
+                return self.send(200, {'ok': True, 'n': n, 'deg': deg})
+            if u.path == '/api/kindle/import':
+                start_import(self.body().get('asins') or [])
+                return self.send(200, job_status())
+            self.send(404, {'error': 'not found'})
         except Exception as e:
             self.send(400, {'error': str(e)})
 
@@ -194,44 +332,7 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = False
 
 
-def open_window():
-    url = f'http://127.0.0.1:{PORT}/'
-    for edge in (r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-                 r'C:\Program Files\Microsoft\Edge\Application\msedge.exe'):
-        if os.path.exists(edge):
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 1  # SW_SHOWNORMAL：pythonw 启动时子进程可能继承“隐藏/最小化”
-            prof = os.path.join(HERE, '.edge-profile')  # 独立配置，不受日常 Edge 的扩展和窗口记忆影响
-            subprocess.Popen([edge, f'--app={url}', f'--user-data-dir={prof}', '--window-size=1400,1000',
-                              '--window-position=120,60', '--no-first-run', '--no-default-browser-check'], startupinfo=si)
-            return
-    webbrowser.open(url)
-
-
-def already_running():
-    try:
-        r = urllib.request.urlopen(f'http://127.0.0.1:{PORT}/api/ping', timeout=1).read()
-        return b'manga-shelf' in r
-    except Exception:
-        return False
-
-
-def watchdog():
-    while True:
-        time.sleep(10)
-        # 窗口关闭后约 2.5 分钟退出；刚启动时多给点时间
-        if time.time() - last_ping > (300 if time.time() - START < 300 else 150):
-            os._exit(0)
-
-
 if __name__ == '__main__':
-    if already_running():
-        if '--no-window' not in sys.argv:
-            open_window()
-        sys.exit(0)
-    srv = Server(('127.0.0.1', PORT), H)
-    threading.Thread(target=watchdog, daemon=True).start()
-    if '--no-window' not in sys.argv:
-        threading.Timer(0.3, open_window).start()
-    srv.serve_forever()
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 47615
+    print(f'http://127.0.0.1:{port}/  library={LIB}')
+    Server(('127.0.0.1', port), H).serve_forever()

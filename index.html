@@ -9,6 +9,7 @@
 :root{
   --bg:#141414; --bar:#1c1c1c; --line:#2a2a2a; --text:#e8e6e3; --muted:#9a9895;
   --accent:#f0a33a; --hover:#242424; --read-bg:#000;
+  color-scheme:dark;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
@@ -78,6 +79,44 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .pill.main{background:var(--accent);border-color:var(--accent);color:#111;font-weight:600}
 .toast{position:absolute;left:50%;bottom:90px;transform:translateX(-50%);z-index:6;background:#000c;
   padding:7px 16px;border-radius:16px;font-size:13px;color:#ddd;pointer-events:none;transition:opacity .3s}
+.menu .rot{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.menu .rot span{flex:1;color:#ccc;white-space:nowrap}
+.menu .rot button{padding:5px 10px;border:1px solid var(--line);border-radius:6px;font-size:12px;color:#ddd}
+.menu .rot button:hover{background:#2c2c2c}
+.menu .rot em{font-style:normal;color:var(--accent);font-size:11px;margin-left:4px}
+.menu .rots{margin-bottom:14px}
+
+/* ---------- 从 Kindle 导入 ---------- */
+.tbtn{padding:7px 14px;border:1px solid var(--line);border-radius:6px;font-size:13px;color:var(--text);white-space:nowrap}
+.tbtn:hover{background:var(--hover)}
+.tbtn.busy{border-color:var(--accent);color:var(--accent)}
+.modal{position:fixed;inset:0;z-index:20;background:#000a;display:flex;align-items:center;justify-content:center;padding:24px}
+.dlg{width:min(620px,100%);max-height:min(720px,100%);display:flex;flex-direction:column;background:#1c1c1c;
+  border:1px solid #333;border-radius:12px;box-shadow:0 20px 60px #000c}
+.dlg header{display:flex;align-items:center;padding:16px 20px 6px}
+.dlg header h2{flex:1;margin:0;font-size:17px;font-weight:600}
+.dlg .x{font-size:20px;line-height:1;padding:4px 8px;border-radius:6px;color:var(--muted)}
+.dlg .x:hover{background:#2c2c2c;color:var(--text)}
+.dlg .sub{padding:0 20px 12px;color:var(--muted);font-size:12px;line-height:1.6;word-break:break-all}
+.klist{flex:1;overflow:auto;border-top:1px solid var(--line);border-bottom:1px solid var(--line);min-height:120px}
+.krow{display:flex;align-items:center;gap:12px;padding:9px 20px;font-size:13px;border-bottom:1px solid #232323;cursor:pointer}
+.krow:hover{background:#222}
+.krow.off{cursor:default;color:var(--muted)}
+.krow input{accent-color:var(--accent);width:15px;height:15px;margin:0;cursor:inherit}
+.krow .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.krow .s{color:var(--muted);font-size:12px;white-space:nowrap}
+.krow .s.ok{color:#7fbf7f} .krow .s.err{color:#e07a6a} .krow .s.doing{color:var(--accent)}
+.kmsg{padding:40px 20px;color:var(--muted);text-align:center;line-height:1.8;font-size:13px}
+.dlg footer{padding:14px 20px 16px}
+.kprog{margin-bottom:12px}
+.kprog .bar{height:6px;background:#2e2e2e;border-radius:3px;overflow:hidden}
+.kprog .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.kprog .lbl{font-size:12px;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kfoot{display:flex;align-items:center;gap:12px;font-size:13px}
+.kfoot label{display:flex;align-items:center;gap:8px;color:var(--muted);cursor:pointer}
+.kfoot label input{accent-color:var(--accent)}
+.kfoot .spacer{flex:1}
+.kfoot .pill:disabled{opacity:.45;cursor:default}
 </style>
 </head>
 <body>
@@ -86,6 +125,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   <div class="topbar">
     <h1>图书馆</h1><span class="count" id="count"></span>
     <div class="spacer"></div>
+    <button class="tbtn" id="kbtn" title="把 Kindle 电脑版里的漫画转成 cbz 放进书架">从 Kindle 导入</button>
     <input class="search" id="q" placeholder="搜索书名" autocomplete="off">
     <div class="seg" id="sort">
       <button data-v="recent">最近阅读</button><button data-v="title">书名</button>
@@ -94,6 +134,23 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   <div id="cont"></div>
   <div class="grid" id="grid"></div>
 </section>
+
+<div class="modal hidden" id="kmodal">
+  <div class="dlg" role="dialog" aria-labelledby="ktitle">
+    <header><h2 id="ktitle">从 Kindle 导入</h2><button class="x" id="kclose" title="关闭（导入会在后台继续）">×</button></header>
+    <div class="sub" id="ksub">正在查找 Kindle 电脑版里的书…</div>
+    <div class="klist" id="klist"></div>
+    <footer>
+      <div class="kprog hidden" id="kprog"><div class="bar"><i id="kbar"></i></div><div class="lbl" id="klbl"></div></div>
+      <div class="kfoot">
+        <label><input type="checkbox" id="kall"> 全选未导入</label>
+        <div class="spacer"></div>
+        <span id="kcount" style="color:var(--muted)"></span>
+        <button class="pill main" id="kgo" disabled>导入</button>
+      </div>
+    </footer>
+  </div>
+</div>
 
 <section id="reader" class="hidden chrome-off">
   <div id="stage"></div>
@@ -115,6 +172,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
     <div class="seg" data-k="dir"><button data-v="rtl">从右往左（日漫）</button><button data-v="ltr">从左往右</button></div>
     <h4>背景</h4>
     <div class="seg" data-k="bg"><button data-v="#111">黑色</button><button data-v="#2a2a2a">深灰</button><button data-v="#f4efe6">纸白</button></div>
+    <h4>旋转本页</h4>
+    <div class="rots" id="rots"></div>
     <div class="tip">点屏幕左右两侧翻页，点中间显示菜单。<br>键盘：← → 翻页，F 全屏，Esc 返回。<br>横向跨页始终整张显示。</div>
   </div>
   <div class="endcard hidden" id="end"></div>
@@ -167,7 +226,7 @@ function renderLibrary(){
       ${b.progress ? `<div class="pbar"><i style="width:${p}%"></i></div>` : ''}
       <div class="name">${esc(b.title)}</div>
       <div class="meta">${b.progress ? `已读 ${p}%` : `${b.total} 页`}</div></div>`;
-  }).join('') : `<div class="empty">${BOOKS.length ? '没有匹配的书' : '书架是空的<br>把 .cbz / .zip 漫画放进书库文件夹后刷新即可'}</div>`;
+  }).join('') : `<div class="empty">${BOOKS.length ? '没有匹配的书' : '书架是空的<br>点右上角「从 Kindle 导入」，或把 .cbz / .zip 漫画放进书库文件夹'}</div>`;
 }
 function esc(s){ return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
 $('#library').addEventListener('click', e => {
@@ -182,7 +241,7 @@ $('#sort').addEventListener('click', e => {
 });
 
 /* ---------------- 阅读器 ---------------- */
-const R = {book:null, dims:[], views:[], vi:0, page:0};
+const R = {book:null, dims:[], rot:[], views:[], vi:0, page:0};
 function isWide(i){ const d = R.dims[i]; return d && d[0] > d[1] }
 function buildViews(){
   const n = R.dims.length, v = [];
@@ -202,7 +261,7 @@ async function openBook(id){
   const meta = await (await fetch('/api/book?id=' + encodeURIComponent(id))).json();
   if (meta.error) { location.hash = ''; return; }
   R.book = BOOKS.find(b => b.id === id) || {id, title:id.replace(/\.(cbz|zip)$/i, '')};
-  R.dims = meta.dims;
+  R.dims = meta.dims; R.rot = meta.rot || meta.dims.map(() => 0);
   const p = meta.progress?.page || 0;
   R.page = p >= R.dims.length - 1 ? 0 : p;     // 读完的书从头开始
   $('#rtitle').textContent = R.book.title;
@@ -234,8 +293,9 @@ function show(){
   $('#pct').textContent = `${Math.round(last / R.dims.length * 100)}%`;
   history.replaceState(null, '', '#/read/' + encodeURIComponent(R.book.id) + '/' + R.page);
   saveProgress();
+  if (!$('#menu').classList.contains('hidden')) syncRots();
 }
-const pageUrl = i => `/page?id=${encodeURIComponent(R.book.id)}&n=${i}`;
+const pageUrl = i => `/page?id=${encodeURIComponent(R.book.id)}&n=${i}&r=${R.rot[i] || 0}`;
 let saveT;
 function saveProgress(){
   clearTimeout(saveT);
@@ -276,16 +336,139 @@ $('#full').onclick = () => toggleFull();
 function toggleFull(){ document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {}) }
 function syncMenu(){
   document.querySelectorAll('#menu .seg').forEach(s => s.querySelectorAll('button').forEach(b => b.classList.toggle('on', prefs[s.dataset.k] === b.dataset.v)));
+  syncRots();
+}
+function syncRots(){
+  // 双页时左右两页各一行，顺序和屏幕上一致
+  const view = R.views[R.vi] || [];
+  const order = prefs.dir === 'rtl' ? view.slice().reverse() : view;
+  const side = (k) => order.length < 2 ? '' : k === 0 ? '左页 · ' : '右页 · ';
+  $('#rots').innerHTML = order.map((i, k) => `<div class="rot"><span>${side(k)}第 ${i + 1} 页${R.rot[i] ? `<em>${R.rot[i]}°</em>` : ''}</span>
+    <button data-p="${i}" data-by="-90" title="逆时针 90°">↺ 左转</button><button data-p="${i}" data-by="90" title="顺时针 90°">↻ 右转</button>
+    ${R.rot[i] ? `<button data-p="${i}" data-by="0" title="恢复原样">还原</button>` : ''}</div>`).join('');
+}
+async function rotatePage(i, by){
+  const body = by === 0 ? {id:R.book.id, n:i, deg:0} : {id:R.book.id, n:i, by};
+  const r = await (await fetch('/api/rotate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})).json();
+  if (r.error) { toast('旋转失败：' + r.error); return; }
+  const old = R.rot[i] || 0;
+  if ((r.deg - old) % 180) R.dims[i] = [R.dims[i][1], R.dims[i][0]];   // 转了 90° 宽高互换，跨页判断随之改变
+  R.rot[i] = r.deg;
+  R.page = i; buildViews(); show(); syncRots();
+  toast(r.deg ? `第 ${i + 1} 页已旋转 ${r.deg}°` : `第 ${i + 1} 页已还原`);
 }
 $('#menu').addEventListener('click', e => {
-  const b = e.target.closest('button'); const s = e.target.closest('.seg'); if (!b || !s) return;
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.p != null) { rotatePage(+b.dataset.p, +b.dataset.by); return; }
+  const s = e.target.closest('.seg'); if (!s) return;
   prefs[s.dataset.k] = b.dataset.v; store.set('prefs', prefs); syncMenu(); applyPrefs(); buildViews(); show();
 });
 function applyPrefs(){ document.documentElement.style.setProperty('--read-bg', prefs.bg) }
 let toastT;
 function toast(t){ const el = $('#toast'); el.textContent = t; el.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => el.style.opacity = 0, 1600) }
 
+/* ---------------- 从 Kindle 导入 ---------------- */
+const K = {books:[], sel:new Set(), job:null, timer:0, seen:0};
+const mb = n => (n / 1048576).toFixed(0) + ' MB';
+async function openKindle(){
+  $('#kmodal').classList.remove('hidden');
+  $('#ksub').textContent = '正在查找 Kindle 电脑版里的书…';
+  $('#klist').innerHTML = '';
+  try {
+    const d = await (await fetch('/api/kindle')).json();
+    if (d.error) throw new Error(d.error);
+    K.books = d.books; K.job = d.job;
+    K.sel = new Set([...K.sel].filter(a => K.books.some(b => b.asin === a && !b.imported)));
+    $('#ksub').innerHTML = d.dirs.length
+      ? `Kindle 内容目录：${d.dirs.map(esc).join('；')}<br>导入到：${esc(d.library)}`
+      : '没有在 Kindle 电脑版里找到可导入的书。请先安装 Kindle 电脑版，并把要导入的书下载到本地。';
+  } catch (err) {
+    $('#ksub').textContent = '读取失败：' + err.message; K.books = [];
+  }
+  renderKindle();
+  if (K.job?.running) pollKindle();
+}
+function renderKindle(){
+  const job = K.job, running = !!job?.running;
+  const st = {};
+  (job?.items || []).forEach((it, k) => st[it.asin] = {...it, k});
+  if (!K.books.length) {
+    $('#klist').innerHTML = `<div class="kmsg">${$('#ksub').textContent.startsWith('正在') ? '' : '没有找到可导入的书<br>只支持通过「发送到 Kindle」传上去、没有 DRM 的个人文档'}</div>`;
+  } else {
+    $('#klist').innerHTML = K.books.map(b => {
+      const s = st[b.asin];
+      let label = b.imported ? '已导入' : mb(b.size), cls = '';
+      if (s && (running || job.finished)) {
+        if (s.state === 'wait') label = '等待中';
+        else if (s.state === 'doing') { label = job.pages ? `导入中 ${Math.round(job.page / job.pages * 100)}%` : '读取中…'; cls = 'doing'; }
+        else if (s.state === 'done') { label = '完成 · ' + s.msg; cls = 'ok'; }
+        else if (s.state === 'skip') { label = '跳过 · ' + s.msg; cls = s.msg === '已存在' ? '' : 'err'; }
+        else if (s.state === 'error') { label = '失败 · ' + s.msg; cls = 'err'; }
+      }
+      const off = b.imported || running;
+      return `<label class="krow${off ? ' off' : ''}" title="${esc(b.title)}"><input type="checkbox" data-a="${b.asin}" ${K.sel.has(b.asin) && !b.imported ? 'checked' : ''} ${off ? 'disabled' : ''}>
+        <span class="t">${esc(b.title)}</span><span class="s ${cls}">${esc(label)}</span></label>`;
+    }).join('');
+  }
+  const avail = K.books.filter(b => !b.imported);
+  $('#kall').checked = avail.length > 0 && avail.every(b => K.sel.has(b.asin));
+  $('#kall').disabled = running || !avail.length;
+  $('#kcount').textContent = running ? '' : avail.length ? `已选 ${K.sel.size} 本` : K.books.length ? '全部都已导入' : '';
+  const go = $('#kgo');
+  go.disabled = running || !K.sel.size;
+  go.textContent = running ? '导入中…' : K.sel.size ? `导入 ${K.sel.size} 本` : '导入';
+  // 进度条：已完成的书 + 当前这本的页进度
+  const items = job?.items || [];
+  $('#kprog').classList.toggle('hidden', !items.length || !(running || job.finished));
+  if (items.length) {
+    const doneN = items.filter(i => !['wait', 'doing'].includes(i.state)).length;
+    const frac = running && job.pages ? job.page / job.pages : 0;
+    $('#kbar').style.width = ((doneN + frac) / items.length * 100) + '%';
+    const cur = items[job.index];
+    $('#klbl').textContent = running
+      ? `第 ${Math.min(doneN + 1, items.length)} / ${items.length} 本：${cur ? cur.title : ''}${job.pages ? `（${job.page} / ${job.pages} 页）` : ''}`
+      : `导入完成：成功 ${items.filter(i => i.state === 'done').length} 本` +
+        (items.some(i => i.state !== 'done') ? `，跳过或失败 ${items.filter(i => i.state !== 'done').length} 本` : '');
+  }
+  $('#kbtn').classList.toggle('busy', running);
+  $('#kbtn').textContent = running ? `导入中 ${items.filter(i => !['wait', 'doing'].includes(i.state)).length}/${items.length}` : '从 Kindle 导入';
+}
+async function pollKindle(){
+  clearTimeout(K.timer);
+  try { K.job = await (await fetch('/api/kindle/status')).json(); } catch { K.timer = setTimeout(pollKindle, 1500); return; }
+  const doneN = K.job.items.filter(i => i.state === 'done').length;
+  if (doneN !== K.seen) {                       // 每导入完一本就刷新书架，并把它标成已导入
+    K.seen = doneN;
+    const ok = new Set(K.job.items.filter(i => i.state === 'done' || i.state === 'skip' && i.msg === '已存在').map(i => i.asin));
+    K.books.forEach(b => { if (ok.has(b.asin)) { b.imported = true; K.sel.delete(b.asin); } });
+    if ($('#reader').classList.contains('hidden')) loadLibrary();
+  }
+  renderKindle();
+  if (K.job.running) K.timer = setTimeout(pollKindle, 500);
+  else { if ($('#reader').classList.contains('hidden')) loadLibrary(); if (!doneN) K.seen = 0; }
+}
+async function startKindle(){
+  const asins = K.books.filter(b => K.sel.has(b.asin) && !b.imported).map(b => b.asin);
+  if (!asins.length) return;
+  $('#kgo').disabled = true;
+  const r = await (await fetch('/api/kindle/import', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({asins})})).json();
+  if (r.error) { $('#kcount').textContent = r.error; $('#kgo').disabled = false; return; }
+  K.job = r; K.seen = 0; renderKindle(); pollKindle();
+}
+$('#kbtn').onclick = openKindle;
+$('#kclose').onclick = () => $('#kmodal').classList.add('hidden');
+$('#kmodal').addEventListener('click', e => { if (e.target.id === 'kmodal') $('#kmodal').classList.add('hidden'); });
+$('#kgo').onclick = startKindle;
+$('#klist').addEventListener('change', e => {
+  const a = e.target.dataset.a; if (!a) return;
+  e.target.checked ? K.sel.add(a) : K.sel.delete(a); renderKindle();
+});
+$('#kall').addEventListener('change', e => {
+  K.sel = new Set(e.target.checked ? K.books.filter(b => !b.imported).map(b => b.asin) : []); renderKindle();
+});
+
 addEventListener('keydown', e => {
+  if (!$('#kmodal').classList.contains('hidden')) { if (e.key === 'Escape') $('#kmodal').classList.add('hidden'); return; }
   if ($('#reader').classList.contains('hidden')) { if (e.key === '/' ) { e.preventDefault(); $('#q').focus(); } return; }
   const k = e.key;
   if (k === 'ArrowLeft') go(nextDir('l'));
@@ -325,7 +508,6 @@ async function route(){
   }
 }
 addEventListener('hashchange', route);
-setInterval(() => fetch('/api/ping').catch(() => {}), 10000); fetch('/api/ping').catch(() => {});
 route();
 </script>
 </body>

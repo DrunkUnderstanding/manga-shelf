@@ -1,14 +1,21 @@
+# Python / 打包
 __pycache__/
 *.pyc
 build/
 dist/
 *.spec
 
-# 运行时数据
-.cache/
-.webview/
-.edge-profile/
-config.json
+# 运行时数据（都在程序目录旁边生成）
 progress.json
 progress.json.tmp
+rotations.json
+rotations.json.tmp
+config.json
 server.log
+.cache/
+.webview/
+library/
+
+# 漫画文件
+*.cbz
+*.cbz.part
